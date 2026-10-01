@@ -113,7 +113,17 @@ public abstract class EventSubscriptionWithCheckpoint<T>(
             Logger.Current = Log;
 
             var checkpointedRun = (CheckpointedRun)run;
-            var ctx             = new AsyncConsumeContext(context, checkpointedRun.AckMessage, checkpointedRun.NackMessage);
+
+            // Never reaches the pipe, so nothing needs the wrapper: the run's own ack takes the context as is.
+            if (context.Message == null) {
+                // ReSharper disable once NullCoalescingConditionIsAlwaysNotNullAccordingToAPIContract
+                context.LogContext ??= Log;
+                await HandleWithoutPayload(context, checkpointedRun.AckMessage).NoContext();
+
+                return;
+            }
+
+            var ctx = new AsyncConsumeContext(context, checkpointedRun.AckMessage, checkpointedRun.NackMessage);
             await Handler(ctx).NoContext();
         } catch (OperationCanceledException e) when (context.CancellationToken.IsCancellationRequested) {
             context.LogContext.MessageHandlingFailed(Options.SubscriptionId, context, e);
