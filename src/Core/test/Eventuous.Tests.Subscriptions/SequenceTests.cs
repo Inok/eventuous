@@ -61,6 +61,91 @@ public class SequenceTests {
         first.ShouldBe(new(9, 9, timestamp));
     }
 
+    [Test]
+    public void ShouldReturnMaxWhenNoGap() {
+        var sequence = Sequence(3, 4, 5);
+        sequence.FirstBeforeGap().Sequence.ShouldBe(5UL);
+    }
+
+    [Test]
+    public void ShouldReturnEmptyForEmptySet() {
+        new CommitPositionSequence().FirstBeforeGap().ShouldBe(CommitPosition.None);
+    }
+
+    [Test]
+    public void ShouldFindGapAtTheStart() {
+        var sequence = Sequence(1, 3, 4);
+        sequence.FirstBeforeGap().Sequence.ShouldBe(1UL);
+    }
+
+    [Test]
+    public void ShouldFindGapInTheMiddle() {
+        var sequence = Sequence(0, 1, 2, 4, 5);
+        sequence.FirstBeforeGap().Sequence.ShouldBe(2UL);
+    }
+
+    [Test]
+    public void ShouldReturnFirstOfTwoGaps() {
+        var sequence = Sequence(0, 1, 3, 4, 6, 7);
+        sequence.FirstBeforeGap().Sequence.ShouldBe(1UL);
+    }
+
+    [Test]
+    public void ShouldWorkForTwoWithoutGap() {
+        var sequence = Sequence(7, 8);
+        sequence.FirstBeforeGap().Sequence.ShouldBe(8UL);
+    }
+
+    [Test]
+    public void ShouldWorkForTwoWithGap() {
+        var sequence = Sequence(7, 9);
+        sequence.FirstBeforeGap().Sequence.ShouldBe(7UL);
+    }
+
+    [Test]
+    public void RemoveUpTo_removes_exactly_the_prefix() {
+        var sequence = Sequence(2, 3, 4, 6, 7);
+        sequence.RemoveUpTo(4);
+        sequence.Select(x => x.Sequence).ShouldBe([6UL, 7UL]);
+    }
+
+    [Test]
+    public void RemoveUpTo_removes_across_a_gap() {
+        var sequence = Sequence(2, 3, 6, 7);
+        sequence.RemoveUpTo(5);
+        sequence.Select(x => x.Sequence).ShouldBe([6UL, 7UL]);
+    }
+
+    [Test]
+    public void RemoveUpTo_is_a_noop_on_empty_set() {
+        var sequence = new CommitPositionSequence();
+        sequence.RemoveUpTo(10);
+        sequence.Count.ShouldBe(0);
+    }
+
+    [Test]
+    public void RemoveUpTo_below_minimum_removes_nothing() {
+        var sequence = Sequence(5, 6, 7);
+        sequence.RemoveUpTo(4);
+        sequence.Count.ShouldBe(3);
+    }
+
+    [Test]
+    public void RemoveUpTo_above_maximum_empties_the_set() {
+        var sequence = Sequence(5, 6, 7);
+        sequence.RemoveUpTo(100);
+        sequence.Count.ShouldBe(0);
+    }
+
+    static CommitPositionSequence Sequence(params ulong[] sequences) {
+        var result = new CommitPositionSequence();
+
+        // Positions differ from sequences so a mix-up between the two shows
+        foreach (var seq in sequences) result.Add(new(seq + 100, seq, DateTime.Now));
+
+        return result;
+    }
+
     public static IEnumerable<Func<(CommitPositionSequence, CommitPosition)>> TestData() {
         var timestamp = DateTime.Now;
 
