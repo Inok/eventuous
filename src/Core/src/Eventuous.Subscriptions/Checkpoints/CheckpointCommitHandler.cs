@@ -143,10 +143,10 @@ public sealed class CheckpointCommitHandler : IAsyncDisposable {
             position.LogContext?.CommittingPosition(position);
             await _commitCheckpoint(new(_subscriptionId, position.Position), force, cancellationToken).NoContext();
             _lastCommit = position;
-            _positions.RemoveWhere(x => x.Sequence <= position.Sequence);
+            _positions.RemoveUpTo(position.Sequence);
         } catch (OperationCanceledException) {
             await _commitCheckpoint(new(_subscriptionId, position.Position), true, default).NoContext();
-            _positions.RemoveWhere(x => x.Sequence <= position.Sequence);
+            _positions.RemoveUpTo(position.Sequence);
         } catch (Exception e) {
             position.LogContext?.UnableToCommitPosition(position, e);
         }
