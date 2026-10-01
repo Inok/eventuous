@@ -24,8 +24,17 @@ public sealed class AsyncHandlingFilter : ConsumeFilter<AsyncConsumeContext>, IA
         _worker = new(Channel.CreateBounded<WorkerTask>(options), DelayedConsume, (int)concurrencyLimit);
     }
 
+    // Not async on purpose: an async method's ExecutionContext is restored when it returns, so a logger
+    // context set inside one never reaches the reader loop, and every message pays for a new context.
+    // Set here it stays with the loop, and is written again only when the next message brings another.
+    static ValueTask DelayedConsume(WorkerTask workerTask, CancellationToken ct) {
+        Logger.Current = workerTask.Context.LogContext;
+
+        return Consume(workerTask, ct);
+    }
+
     // ReSharper disable once CognitiveComplexity
-    static async ValueTask DelayedConsume(WorkerTask workerTask, CancellationToken ct) {
+    static async ValueTask Consume(WorkerTask workerTask, CancellationToken ct) {
         var ctx = workerTask.Context;
 
         using var activity = ctx.Items.GetItem<Activity>(ContextItemKeys.Activity)?.Start();
@@ -47,8 +56,6 @@ public sealed class AsyncHandlingFilter : ConsumeFilter<AsyncConsumeContext>, IA
             cts = CancellationTokenSource.CreateLinkedTokenSource(ctx.CancellationToken, ct);
             ctx.CancellationToken = cts.Token;
         }
-
-        Logger.Current = ctx.LogContext;
 
         try {
             try {

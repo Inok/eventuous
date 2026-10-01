@@ -6,6 +6,7 @@ using Eventuous.Subscriptions.Checkpoints;
 using Eventuous.Subscriptions.Context;
 using Eventuous.Subscriptions.Diagnostics;
 using Eventuous.Subscriptions.Filters;
+using Eventuous.Subscriptions.Logging;
 using Eventuous.Tools;
 
 namespace Eventuous.KurrentDB.Subscriptions;
@@ -153,6 +154,10 @@ public class AllStreamSubscription : KurrentDBCatchUpSubscriptionBase<AllStreamS
             ulong?                          headPosition,
             ulong?                          lastScannedPosition
         ) {
+        // Once, for the whole loop: set by HandleInternal instead it would be lost when that returns, and
+        // written again for every event.
+        Logger.Current = Log;
+
         while (await messages.MoveNextAsync().NoContext()) {
             // Falling behind re-enters catch-up mode: re-read the head as the new commit candidate, since
             // reading it later from the caught-up message could race matches still in flight. Kept outside

@@ -5,6 +5,7 @@ using Eventuous.Subscriptions.Checkpoints;
 using Eventuous.Subscriptions.Context;
 using Eventuous.Subscriptions.Diagnostics;
 using Eventuous.Subscriptions.Filters;
+using Eventuous.Subscriptions.Logging;
 using Eventuous.Tools;
 
 namespace Eventuous.KurrentDB.Subscriptions;
@@ -113,7 +114,16 @@ public class StreamSubscription : KurrentDBCatchUpSubscriptionBase<StreamSubscri
             _                                                     => FromStream.After(StreamPosition.FromInt64((long)position))
         };
 
-        async Task HandleEvent(ResolvedEvent re, CancellationToken ct) {
+        // Not async on purpose: the client calls this from its own read loop, so a logger context set here
+        // stays with that loop, where one set inside an async method would be lost when it returns and
+        // written again for every event.
+        Task HandleEvent(ResolvedEvent re, CancellationToken ct) {
+            Logger.Current = Log;
+
+            return HandleResolvedEvent(re, ct);
+        }
+
+        async Task HandleResolvedEvent(ResolvedEvent re, CancellationToken ct) {
             // Despite ResolvedEvent.Event being not marked as nullable, it returns null for deleted events
             // ReSharper disable once ConditionIsAlwaysTrueOrFalse
             // ReSharper disable once ConditionIsAlwaysTrueOrFalseAccordingToNullableAPIContract
