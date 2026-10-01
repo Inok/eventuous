@@ -13,7 +13,11 @@ static class ChannelExtensions {
         public async Task Read(ProcessElement<T> process, CancellationToken cancellationToken) {
             try {
                 while (!cancellationToken.IsCancellationRequested) {
-                    var element = await channel.Reader.ReadAsync(cancellationToken).NoContext();
+                    // Not cancellable on purpose: a bounded channel parks such a read on an operation it keeps
+                    // and reuses, where a cancellable one allocates per wake — per event, on a caught-up
+                    // subscription. So an idle reader is woken only by the channel completing, never by the
+                    // token, which must therefore not be cancelled before the channel is completed (see Stop).
+                    var element = await channel.Reader.ReadAsync(CancellationToken.None).NoContext();
                     await process(element, cancellationToken).NoContext();
                 }
             } catch (OperationCanceledException) {
@@ -39,6 +43,7 @@ static class ChannelExtensions {
                 Task[]                              readers,
                 Func<CancellationToken, ValueTask>? finalize = null
             ) {
+            // First, before anything cancels cts: completion is the only thing that wakes an idle Read loop.
             channel.Writer.TryComplete();
 
             var incompleteReaders = readers.Where(r => !r.IsCompleted).ToArray();
