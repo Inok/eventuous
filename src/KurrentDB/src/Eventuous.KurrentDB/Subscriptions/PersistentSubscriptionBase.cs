@@ -99,9 +99,6 @@ public abstract class PersistentSubscriptionBase<T> : EventSubscription<T> where
         if (options is { FailureHandler: not null, ThrowOnError: false }) Log.ThrowOnErrorIncompatible();
     }
 
-    const string ResolvedEventKey = "resolvedEvent";
-    const string SubscriptionKey  = "subscription";
-
     /// <summary>
     /// Execute an operation to set up a persistent subscription
     /// </summary>
@@ -135,20 +132,18 @@ public abstract class PersistentSubscriptionBase<T> : EventSubscription<T> where
             => run.Fail(KurrentDBMappings.AsDropReason(reason), exception);
 
         async Task HandleEvent(PersistentSubscription subscription, ResolvedEvent re, int? retryCount, CancellationToken ct) {
-            Logger.Configure(Options.SubscriptionId, LoggerFactory);
+            Logger.Current = Log;
 
-            var context = CreateContext(run, re, ct)
-                .WithItem(ResolvedEventKey, re)
-                .WithItem(SubscriptionKey, subscription);
+            var context = CreateContext(run, re, ct);
 
             try {
                 await Handler(context).NoContext();
                 LastProcessed = EventPosition.FromContext(context);
-                await Ack(context).NoContext();
+                await Ack(subscription, re).NoContext();
             } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
                 // Its own token was cancelled: the supervisor already knows the run is over.
             } catch (Exception e) {
-                await Nack(context, e).NoContext();
+                await Nack(context, subscription, re, e).NoContext();
             }
         }
     }
@@ -171,16 +166,9 @@ public abstract class PersistentSubscriptionBase<T> : EventSubscription<T> where
             CancellationToken                                                          cancellationToken
         );
 
-    // ReSharper disable once MemberCanBeMadeStatic.Local
-#pragma warning disable CA1822
-    async ValueTask Ack(MessageConsumeContext ctx) {
-#pragma warning restore CA1822
-        var re           = ctx.Items.GetItem<ResolvedEvent>(ResolvedEventKey);
-        var subscription = ctx.Items.GetItem<PersistentSubscription>(SubscriptionKey)!;
-        await subscription.Ack(re).NoContext();
-    }
+    static async ValueTask Ack(PersistentSubscription subscription, ResolvedEvent re) => await subscription.Ack(re).NoContext();
 
-    async ValueTask Nack(MessageConsumeContext ctx, Exception exception) {
+    async ValueTask Nack(MessageConsumeContext ctx, PersistentSubscription subscription, ResolvedEvent re, Exception exception) {
         if (exception is OperationCanceledException && ctx.CancellationToken.IsCancellationRequested) {
             return;
         }
@@ -191,8 +179,6 @@ public abstract class PersistentSubscriptionBase<T> : EventSubscription<T> where
             ctx.LogContext.MessageHandlingFailed(Options.SubscriptionId, ctx, exception);
         }
 
-        var re           = ctx.Items.GetItem<ResolvedEvent>(ResolvedEventKey);
-        var subscription = ctx.Items.GetItem<PersistentSubscription>(SubscriptionKey)!;
         await _handleEventProcessingFailure(Client, subscription, re, exception).NoContext();
     }
 
