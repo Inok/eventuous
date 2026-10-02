@@ -48,10 +48,6 @@ public class CommitPositionSequence() : SortedSet<CommitPosition>(new PositionsC
 
     class PositionsComparer : IComparer<CommitPosition> {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public int Compare(CommitPosition x, CommitPosition y) {
-            if (x.Sequence == y.Sequence) return 0;
-
-            return x.Sequence > y.Sequence ? 1 : -1;
-        }
+        public int Compare(CommitPosition x, CommitPosition y) => x.Sequence.CompareTo(y.Sequence);
     }
 }
