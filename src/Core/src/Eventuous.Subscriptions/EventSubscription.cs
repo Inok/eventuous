@@ -237,9 +237,42 @@ public abstract class EventSubscription<T> : IMessageSubscription, IAsyncDisposa
     string GetActivityName(string? messageType)
         => _activityNames.GetOrAdd(messageType ?? "", static (type, prefix) => prefix + type, _activityNamePrefix);
 
+    protected ValueTask Handler(IMessageConsumeContext context)
+        => context.Message == null
+            ? HandleWithoutPayload(context, context is AsyncConsumeContext ? AcknowledgeAsyncContext : null)
+            : HandleWithPayload(context);
+
+    static readonly Acknowledge AcknowledgeAsyncContext = static context => ((AsyncConsumeContext)context).Acknowledge();
+
+    /// <summary>
+    /// A context without a payload is ignored and acknowledged without entering the pipe, so it skips
+    /// what only the pipe needs: the logging scope and the activity. Hot, since checkpoint-reached
+    /// contexts arrive payload-less.
+    /// </summary>
+    private protected async ValueTask HandleWithoutPayload(IMessageConsumeContext context, Acknowledge? acknowledge) {
+        // ReSharper disable once NullCoalescingConditionIsAlwaysNotNullAccordingToAPIContract
+        Logger.Current ??= Log;
+
+        Log.MessageReceived(context);
+
+        try {
+            context.Ignore(SubscriptionId);
+
+            if (acknowledge != null) await acknowledge(context).NoContext();
+        } catch (OperationCanceledException e) when (context.CancellationToken.IsCancellationRequested) {
+            Log.MessageIgnoredWhenStopping(e);
+        } catch (Exception e) { context.Nack(SubscriptionId, e); }
+
+        if (context.HasFailed() && Options.ThrowOnError) {
+            var exception = context.HandlingResults.GetException();
+
+            throw new SubscriptionException(context.Stream, context.MessageType, context.Message, exception ?? new InvalidOperationException());
+        }
+    }
+
     // ReSharper disable once CognitiveComplexity
     // ReSharper disable once CyclomaticComplexity
-    protected async ValueTask Handler(IMessageConsumeContext context) {
+    async ValueTask HandleWithPayload(IMessageConsumeContext context) {
         // Use KeyValuePair array instead of Dictionary for 5x speedup and 3x less allocation
         var scope = new KeyValuePair<string, object>[] {
             new("SubscriptionId", SubscriptionId),
@@ -251,10 +284,7 @@ public abstract class EventSubscription<T> : IMessageSubscription, IAsyncDisposa
         Logger.Current ??= Log;
 
         using (Log.Logger.BeginScope(scope)) {
-            // No activity for payload-less contexts: they are ignored and acknowledged below without
-            // entering the pipe, so an activity would never be started or disposed on the async path —
-            // a pure allocation leak, hot since checkpoint-reached contexts arrive payload-less.
-            var activity = EventuousDiagnostics.Enabled && context.Message != null
+            var activity = EventuousDiagnostics.Enabled
                 ? SubscriptionActivity.Create(
                     GetActivityName(context.MessageType),
                     ActivityKind.Internal,
@@ -269,23 +299,13 @@ public abstract class EventSubscription<T> : IMessageSubscription, IAsyncDisposa
             Log.MessageReceived(context);
 
             try {
-                if (context.Message != null) {
-                    if (activity != null) {
-                        context.ParentContext = activity.Context;
+                if (activity != null) {
+                    context.ParentContext = activity.Context;
 
-                        if (isAsync) { context.Items.AddItem(ContextItemKeys.Activity, activity); }
-                    }
-
-                    await Pipe.Send(context).NoContext();
+                    if (isAsync) { context.Items.AddItem(ContextItemKeys.Activity, activity); }
                 }
-                else {
-                    context.Ignore(SubscriptionId);
 
-                    if (isAsync) {
-                        var asyncContext = context as AsyncConsumeContext;
-                        await asyncContext!.Acknowledge().NoContext();
-                    }
-                }
+                await Pipe.Send(context).NoContext();
 
                 if (context.WasIgnored() && activity != null) activity.ActivityTraceFlags = ActivityTraceFlags.None;
             } catch (OperationCanceledException e) when (context.CancellationToken.IsCancellationRequested) {
