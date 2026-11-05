@@ -19,23 +19,37 @@ public class TracingFilter : ConsumeFilter<IMessageConsumeContext> {
         _defaultTags = [.. tags, .. EventuousDiagnostics.Tags];
     }
 
-    protected override async ValueTask Send(IMessageConsumeContext context, LinkedListNode<IConsumeFilter>? next) {
-        if (context.Message == null || next == null) return;
+    protected override ValueTask Send(IMessageConsumeContext context, LinkedListNode<IConsumeFilter>? next) {
+        if (context.Message == null || next == null) return default;
 
         // The subscription's own activity is reused, not owned: disposing it would stop it before the
         // subscription is done with it, so only an activity started here gets disposed.
         var reuseCurrent = Activity.Current?.Context == context.ParentContext;
 
-        using var started = reuseCurrent
+        var created = reuseCurrent
             ? null
-            : SubscriptionActivity.Start(
+            : SubscriptionActivity.Create(
                 $"{Constants.Components.Consumer}.{context.SubscriptionId}/{context.MessageType}",
                 ActivityKind.Consumer,
                 context,
                 _defaultTags
             );
 
-        var activity = reuseCurrent ? Activity.Current : started;
+        var reused = reuseCurrent ? Activity.Current : null;
+
+        // Nobody listening, or sampled out: nothing to record after the next filter, so its task is returned
+        // as is rather than awaited.
+        if (reused == null && created == null) return next.Value.Send(context, next.Next);
+
+        return SendTraced(context, next, reused, created);
+    }
+
+    static async ValueTask SendTraced(IMessageConsumeContext context, LinkedListNode<IConsumeFilter> next, Activity? reused, Activity? created) {
+        // Started here, not by the caller: this method's execution context is restored when it returns, so the
+        // started activity doesn't stay current for whoever called the filter.
+        using var started = created?.Start();
+
+        var activity = reused ?? started;
 
         if (activity?.IsAllDataRequested == true && context is AsyncConsumeContext asyncConsumeContext) {
             activity.SetContextTags(context)?.SetTag(TelemetryTags.Eventuous.Partition, asyncConsumeContext.PartitionId);

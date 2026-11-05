@@ -57,8 +57,9 @@ public abstract class EventHandler(ITypeMapper? mapper = null) : BaseEventHandle
         }
     }
 
-    public override async ValueTask<EventHandlingStatus> HandleEvent(IMessageConsumeContext context)
-        => !_handlersMap.TryGetValue(context.Message!.GetType(), out var handler) ? EventHandlingStatus.Ignored : await handler(context).NoContext();
+    // Not async: there is nothing to do after the handler, so its task is returned as is rather than awaited
+    public override ValueTask<EventHandlingStatus> HandleEvent(IMessageConsumeContext context)
+        => !_handlersMap.TryGetValue(context.Message!.GetType(), out var handler) ? Ignored : handler(context);
 
     public override string ToString() {
         var sb = new StringBuilder();
